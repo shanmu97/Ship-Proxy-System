@@ -1,0 +1,17 @@
+# Dockerfile.ship
+FROM node:lts-slim
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+COPY ship_proxy.js .
+COPY protocol.js .
+
+ENV OFFSHORE_HOST=offshore-proxy
+ENV OFFSHORE_PORT=9999
+
+EXPOSE 8080
+
+CMD ["node", "ship_proxy.js"]

@@ -1,0 +1,15 @@
+# Dockerfile.offshore
+FROM node:lts-slim
+
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+COPY offshore_proxy.js .
+COPY protocol.js .
+
+EXPOSE 9999
+
+CMD ["node", "offshore_proxy.js"]
