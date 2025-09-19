@@ -16,7 +16,7 @@ A two-tier proxy system consisting of an offshore proxy and a ship proxy that wo
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone https://github.com/shanmu97/Ship-Proxy-System.git
 cd segments
 ```
 
