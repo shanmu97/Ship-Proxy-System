@@ -1,4 +1,4 @@
-# Segments Proxy System
+# Ship Proxy System
 
 A two-tier proxy system consisting of an offshore proxy and a ship proxy that work together to handle HTTP/HTTPS requests through a custom protocol.
 
