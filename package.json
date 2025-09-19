@@ -1,5 +1,17 @@
 {
   "dependencies": {
     "dotenv": "^17.2.2"
-  }
+  },
+  "name": "segments",
+  "version": "1.0.0",
+  "main": "offshore_proxy.js",
+  "devDependencies": {},
+  "scripts": {
+    "first":"node offshore_proxy.js",
+    "second":"node ship_proxy.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
 }

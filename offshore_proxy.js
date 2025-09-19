@@ -13,11 +13,7 @@ const {
 
 const LISTEN_PORT = process.env.OFFSHORE_PORT ? Number(process.env.OFFSHORE_PORT) : 9999;
 
-/**
- * Parse a raw HTTP request buffer into components.
- * Returns minimal fields needed for proxying.
- * @param {Buffer} buf
- */
+
 function parseHttpRequest(buf) {
   const text = buf.toString("utf8");
   const sep = "\r\n\r\n";
@@ -66,7 +62,6 @@ function chooseAgentAndOptions(method, path, headers) {
     url = new URL(path);
   } else {
     const host = headers["host"] || headers[":authority"];
-    const useHttps = false; // default to HTTP when scheme missing
     const proto = useHttps ? "https:" : "http:";
     url = new URL(`${proto}//${host}${path.startsWith("/") ? path : "/" + path}`);
   }
@@ -84,7 +79,6 @@ function chooseAgentAndOptions(method, path, headers) {
 }
 
 function headersOriginalCase(lowercaseHeaders) {
-  // Best effort: capitalize common headers
   const map = {
     host: "Host",
     connection: "Connection",
@@ -110,7 +104,7 @@ function startServer() {
     const queue = new MessageSendQueue(socket);
 
     let inTunnel = false;
-    let tunnelUpstream = null; // net.Socket to target when in CONNECT
+    let tunnelUpstream = null;
 
     socket.on("data", (chunk) => decoder.push(chunk));
     socket.on("error", (e) => console.error("offshore socket error:", e.message));
@@ -123,31 +117,25 @@ function startServer() {
         if (type !== MessageType.REQUEST) return;
 
         if (inTunnel && tunnelUpstream) {
-          // Opaque data for tunnel
           tunnelUpstream.write(payload);
           return;
         }
-
-        // Parse the HTTP request
         const req = parseHttpRequest(payload);
 
         if (req.method === "CONNECT") {
-          // Establish TCP tunnel
+
           const [host, portStr] = req.path.split(":");
           const port = portStr ? Number(portStr) : 443;
           const upstream = net.connect({ host, port }, async () => {
             inTunnel = true;
             tunnelUpstream = upstream;
-            // Send 200 Connection Established
             const okPayload = Buffer.from("HTTP/1.1 200 Connection Established\r\n\r\n", "utf8");
             await queue.enqueue(MessageType.RESPONSE, okPayload);
           });
           upstream.on("data", async (data) => {
-            // Relay upstream data back as framed response chunks
             try {
               await queue.enqueue(MessageType.RESPONSE, Buffer.from(data));
             } catch (e) {
-              // ignore errors during shutdown
             }
           });
           upstream.on("error", async () => {
@@ -162,9 +150,8 @@ function startServer() {
           return;
         }
 
-        // Forward normal HTTP/HTTPS request
         const { isHttps, options } = chooseAgentAndOptions(req.method, req.path, req.headers);
-        // Remove hop-by-hop headers
+
         delete options.headers["Proxy-Connection"];
         delete options.headers["proxy-connection"];
         delete options.headers["Connection"];
@@ -183,7 +170,7 @@ function startServer() {
             for (const [k, v] of Object.entries(upRes.headers)) {
               headers[k] = v;
             }
-            // Ensure Content-Length for a single-frame body
+            
             headers["Content-Length"] = Buffer.byteLength(body);
             const statusMessage = http.STATUS_CODES[upRes.statusCode] || "";
             const raw = buildRawHttpResponse(upRes.statusCode, statusMessage, headers, body);
@@ -200,7 +187,6 @@ function startServer() {
           await queue.enqueue(MessageType.RESPONSE, raw);
         });
 
-        // Write request body if any
         if (req.body && req.body.length) {
           upstreamReq.write(req.body);
         }

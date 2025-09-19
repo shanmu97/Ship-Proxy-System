@@ -9,45 +9,34 @@ const {
   MessageSendQueue,
 } = require("./protocol");
 
-const PROXY_PORT = Number(process.env.SHIP_PROXY_PORT);
+const PROXY_PORT = Number(process.env.SHIP_PROXY_PORT) || 8080;
 const OFFSHORE_HOST = process.env.OFFSHORE_HOST;
-const OFFSHORE_PORT =  Number(process.env.OFFSHORE_PORT);
+const OFFSHORE_PORT =  Number(process.env.OFFSHORE_PORT) || 9999;
 
 
 function serializeHttpRequest(req, body) {
   const method = req.method;
-  // For an HTTP proxy, req.url may be absolute or relative; keep as-is
   const path = req.url || "/";
   const version = `HTTP/${req.httpVersion}`;
   const startLine = `${method} ${path} ${version}`;
-
-  // Clone headers and ensure proper formatting
   const headers = { ...req.headers };
-  
-  // Ensure Host header is present
   if (!headers["host"]) {
     if (req.headers[":authority"]) {
       headers["host"] = req.headers[":authority"];
     }
   }
-  
-  // Handle body and content-length
   if (body && body.length > 0) {
     headers["content-length"] = Buffer.byteLength(body);
-    // Remove transfer-encoding to force single-frame body
     delete headers["transfer-encoding"];
   } else {
     headers["content-length"] = "0";
     delete headers["transfer-encoding"];
   }
-
-  // Build header lines, preserving original header names where possible
   const headerLines = [];
   for (const [key, value] of Object.entries(headers)) {
     if (value === undefined || value === null) continue;
     
     if (Array.isArray(value)) {
-      // Multiple values for same header
       for (const v of value) {
         headerLines.push(`${key}: ${v}`);
       }
@@ -60,10 +49,6 @@ function serializeHttpRequest(req, body) {
   return Buffer.concat([Buffer.from(head, "utf8"), body || Buffer.alloc(0)]);
 }
 
-/**
- * Minimal HTTP response parser to split status/head/body.
- * Returns { statusCode, statusMessage, headers, body }
- */
 function parseRawHttpResponse(buf) {
   const text = buf.toString("utf8");
   const sep = "\r\n\r\n";
@@ -97,7 +82,7 @@ class OffshoreConnection extends EventEmitter {
     this.port = port;
     this.socket = null;
     this.decoder = new FrameDecoder();
-    this.queue = null; // MessageSendQueue
+    this.queue = null; 
     this.inTunnel = false;
     this._connect();
   }
@@ -111,7 +96,6 @@ class OffshoreConnection extends EventEmitter {
     sock.on("error", (e) => this.emit("error", e));
     sock.on("close", () => {
       this.emit("close");
-      // try auto-reconnect with simple delay
       setTimeout(() => this._connect(), 1000);
     });
   }
@@ -122,8 +106,6 @@ class OffshoreConnection extends EventEmitter {
 }
 
 const offshore = new OffshoreConnection(OFFSHORE_HOST, OFFSHORE_PORT);
-
-// FIFO queue for concurrent requests - ensures sequential processing
 class RequestQueue {
   constructor() {
     this.queue = [];
@@ -147,15 +129,9 @@ class RequestQueue {
     
     try {
       const { req, res, rawRequest } = item;
-      
-      // Send the complete raw request
       await offshore.sendRequest(rawRequest);
-      
-      // Wait for response
       const responseBuf = await waitForSingleResponse();
       const parsed = parseRawHttpResponse(responseBuf);
-      
-      // Send response back to client
       const headers = {};
       for (const [k, v] of Object.entries(parsed.headers)) {
         headers[k] = v;
@@ -178,7 +154,6 @@ class RequestQueue {
       item.reject(e);
     } finally {
       this.processing = false;
-      // Process next item if any
       setImmediate(() => this.processNext());
     }
   }
@@ -189,7 +164,7 @@ const requestQueue = new RequestQueue();
 function waitForSingleResponse() {
   return new Promise((resolve, reject) => {
     const onMessage = ({ type, payload }) => {
-      if (type !== MessageType.RESPONSE) return; // ignore unexpected
+      if (type !== MessageType.RESPONSE) return;
       cleanup();
       resolve(Buffer.from(payload));
     };
@@ -205,20 +180,13 @@ function waitForSingleResponse() {
     offshore.once("error", onError);
   });
 }
-
-// HTTP server for normal methods
 const server = http.createServer(async (req, res) => {
   try {
-    // Capture the complete raw request including headers and body
     const chunks = [];
     req.on("data", (c) => chunks.push(c));
     req.on("end", async () => {
       const body = Buffer.concat(chunks);
-      
-      // Serialize the complete raw request
       const rawRequest = serializeHttpRequest(req, body);
-      
-      // Add to FIFO queue for sequential processing
       await requestQueue.enqueue({ req, res, rawRequest });
     });
   } catch (e) {
@@ -226,16 +194,10 @@ const server = http.createServer(async (req, res) => {
     res.end("Proxy error: " + e.message);
   }
 });
-
-// HTTPS CONNECT handling
 server.on("connect", (req, clientSocket, head) => {
-  // head is bytes already read from socket; include in first send after tunnel established
   (async () => {
     try {
-      // Block normal processing during tunnel
       offshore.inTunnel = true;
-
-      // Send CONNECT request upstream via framing
       const connectLine = `${req.method} ${req.url} HTTP/${req.httpVersion}`;
       const headers = [];
       for (const [k, v] of Object.entries(req.headers)) {
@@ -244,8 +206,6 @@ server.on("connect", (req, clientSocket, head) => {
       }
       const raw = Buffer.from(connectLine + "\r\n" + headers.join("\r\n") + "\r\n\r\n", "utf8");
       await offshore.sendRequest(raw);
-
-      // Wait for upstream 200 response
       const resp = await waitForSingleResponse();
       const text = resp.toString("utf8");
       if (!/^HTTP\/\d\.\d\s+200/i.test(text)) {
@@ -254,13 +214,8 @@ server.on("connect", (req, clientSocket, head) => {
         offshore.inTunnel = false;
         return;
       }
-      // Respond OK to client
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-
-      // Forward any initial head bytes from client
       if (head && head.length) await offshore.queue.enqueue(MessageType.REQUEST, Buffer.from(head));
-
-      // Pipe client -> offshore
       const onClientData = async (data) => {
         try {
           await offshore.queue.enqueue(MessageType.REQUEST, Buffer.from(data));
@@ -278,8 +233,6 @@ server.on("connect", (req, clientSocket, head) => {
       clientSocket.on("data", onClientData);
       clientSocket.once("close", onClientClose);
       clientSocket.once("error", onClientError);
-
-      // Offshore -> client
       const onMessage = async ({ type, payload }) => {
         if (!offshore.inTunnel) return;
         if (type !== MessageType.RESPONSE) return;

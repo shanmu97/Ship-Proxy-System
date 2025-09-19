@@ -1,14 +1,14 @@
-# Dockerfile.offshore
 FROM node:lts-slim
-
 
 WORKDIR /app
 
 COPY package*.json ./
 RUN npm install
 
-COPY offshore_proxy.js .
-COPY protocol.js .
+COPY . .
+
+ENV NODE_ENV=production
+ENV OFFSHORE_PORT=9999
 
 EXPOSE 9999
 
